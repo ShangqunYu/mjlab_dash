@@ -2,6 +2,17 @@
 
 # mjlab
 
+  A few notes for training dash:
+  - Mjlab-Velocity-Rough-Dash is the terrain-generator variant if you want to train on rough terrain instead of flat.
+  - --env.scene.num-envs isn't optional in practice — it defaults to 1 if you omit it, which is what tripped me up earlier (basically a no-op training run). 4096 is what the README uses for G1 and is comfortable
+    on your 8GB 3070 (~1.4GB used, 91% GPU util).
+  - Run it from the repo root (/home/simon/Repositories/mjlab_dash) with uv run, per this repo's CLAUDE.md.
+  - Logs land in logs/rsl_rl/dash_velocity/<timestamp>/, with checkpoints (model_*.pt), an exported .onnx, and TensorBoard event files. Point TensorBoard at the whole folder to compare runs: uv run tensorboard 
+    --logdir logs/rsl_rl/dash_velocity.
+  - To resume/watch a trained policy afterward, there's uv run play <task> (same task ID).
+  - Full option list: uv run train Mjlab-Velocity-Flat-Dash --help.
+
+
 [![GitHub Actions](https://img.shields.io/github/actions/workflow/status/mujocolab/mjlab/ci.yml?branch=main)](https://github.com/mujocolab/mjlab/actions/workflows/ci.yml?query=branch%3Amain)
 [![Documentation](https://github.com/mujocolab/mjlab/actions/workflows/docs.yml/badge.svg)](https://mujocolab.github.io/mjlab/)
 [![License](https://img.shields.io/github/license/mujocolab/mjlab)](https://github.com/mujocolab/mjlab/blob/main/LICENSE)

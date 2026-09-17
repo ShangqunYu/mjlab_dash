@@ -195,10 +195,10 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # entropy bonus drives the policy's action std up without bound.
 
   cfg.rewards["dof_pos_limits"].weight = 0.0
-  #cfg.rewards["track_linear_velocity"].weight = 4.0
+  # cfg.rewards["track_linear_velocity"].weight = 4.0
 
-  #cfg.rewards["body_ang_vel"].weight = -0.05
-  #cfg.rewards["angular_momentum"].weight = -0.02
+  # cfg.rewards["body_ang_vel"].weight = -0.05
+  # cfg.rewards["angular_momentum"].weight = -0.02
 
   # Sized to sit under the tracking terms (weight 2.0) without dominating them.
   # This is the main knob: raise it if the gait stays flat-footed.

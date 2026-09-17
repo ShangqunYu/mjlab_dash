@@ -48,6 +48,7 @@ dependencies = [
   "tensordict",
   "rsl-rl-lib==5.5.0",
   "tensorboard>=2.20.0",
+  "setuptools<81",  # tensorboard needs pkg_resources, removed in setuptools>=81.
   "onnxscript>=0.5.4",
   "wandb>=0.22.3,<0.29",
 ]
