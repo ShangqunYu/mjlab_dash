@@ -89,7 +89,11 @@ file like this one.
     (shoulder_roll/yaw, elbow) are their own categories. `EFFORT_LIMIT_*` and
     `ARMATURE` are explicitly flagged as estimates (scaled from robot mass,
     not real motor datasheets) -- replace before any hardware deployment.
-  - PD gains (stiffness 80/damping 2 on legs, 40/1 on arms) are matched to
+  - PD gains follow the motor grouping above, NOT the limbs: stiffness
+    80/damping 2 on every leg joint **and on shoulder_pitch**, which shares
+    the hip's motor; 40/1 only on shoulder_roll, shoulder_yaw and elbow.
+    Saying "40/1 on the arms" is the easy mistake -- it silently halves the
+    stiffness a shoulder_pitch is deployed with. The numbers are matched to
     Unitree G1's published sim-to-real config
     (`unitree_rl_gym/deploy/deploy_real/configs/g1.yaml`) rather than derived
     from Dash's own load -- deliberately softer than an earlier
