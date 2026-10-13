@@ -5,6 +5,7 @@ Structured after mjlab's Unitree G1 velocity config.
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
+from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -140,6 +141,80 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
   cfg.events["base_com"].params["asset_cfg"].body_names = ("torso",)
 
+  # Sim-to-real randomization, from the 2026-10-09 hardware runs (see
+  # DARoS-Core Systems/DashSystem/CLAUDE.md, "Torque figures, measured").
+  #
+  # COM: standing ankle torque on the robot (-10.5 and -13.1 Nm, both ankles)
+  # matches this model with the torso COM moved 2-3.5 cm in -x; nominal gives
+  # -3.8. The stock +/-2.5 cm stops short of that, so the x range is skewed.
+  cfg.events["base_com"].params["ranges"] = {
+    0: (-0.08, 0.0),
+    1: (-0.025, 0.025),
+    2: (-0.03, 0.03),
+  }
+  # Mass: the robot weighs ~38 kg (scale, 2026-10-09); this model totals 40.0.
+  # Per-body scale 0.88-1.05, so the mean total is ~38.6 kg. pseudo_inertia,
+  # not body_mass, so inertia scales with mass. It rebuilds body_ipos from the
+  # defaults, so it must run BEFORE base_com or it erases the torso COM offset:
+  # base_com is re-inserted below to move it after this term.
+  cfg.events["body_mass"] = EventTermCfg(
+    mode="startup",
+    func=dr.pseudo_inertia,
+    params={
+      "asset_cfg": SceneEntityCfg("robot", body_names=(".*",)),
+      "alpha_range": (-0.064, 0.024),  # mass x e^(2 alpha) = 0.88-1.05
+    },
+  )
+  cfg.events["base_com"] = cfg.events.pop("base_com")
+  # The hardware runs the policy's own kp/kd (--policy-gains), but what the
+  # motor delivers per unit of either has never been measured.
+  cfg.events["pd_gains"] = EventTermCfg(
+    mode="startup",
+    func=dr.pd_gains,
+    params={
+      "asset_cfg": SceneEntityCfg("robot", actuator_names=[".*"]),
+      "kp_range": (0.8, 1.2),
+      "kd_range": (0.7, 1.3),
+      "operation": "scale",
+    },
+  )
+  # Reflected rotor inertia is unmeasured. ARMATURE (0.01) came from an IsaacLab
+  # config; reflected inertia grows with gear ratio squared, and the knee (18:1)
+  # and ankle (36:1) use the same motor as the 10:1 hips, so if 0.01 is right
+  # for a hip the ankle is ~0.13. Ranges span that scaling, widely.
+  cfg.events["armature"] = EventTermCfg(
+    mode="startup",
+    func=dr.joint_armature,
+    params={
+      "asset_cfg": SceneEntityCfg("robot"),
+      "ranges": {
+        r".*_hip_.*": (0.01, 0.03),
+        r".*_shoulder_pitch": (0.01, 0.03),
+        r".*_knee_pitch": (0.02, 0.05),
+        r".*_ankle_pitch": (0.01, 0.03),
+        r".*_(shoulder_roll|shoulder_yaw|elbow_pitch)": (0.008, 0.01),
+      },
+      "operation": "abs",
+    },
+  )
+  # Coulomb friction at the output, read from dash_home's sweep torque at
+  # steady speed: ankles 0.6-1.1 Nm, knee <= 1.4, hip yaw <= 2-2.7. Hip
+  # pitch/roll and the arms are unmeasured and borrow the hip yaw bound.
+  cfg.events["joint_friction"] = EventTermCfg(
+    mode="startup",
+    func=dr.joint_friction,
+    params={
+      "asset_cfg": SceneEntityCfg("robot"),
+      "ranges": {
+        r".*_hip_.*": (0.0, 2.5),
+        r".*_knee_pitch": (0.0, 1.5),
+        r".*_ankle_pitch": (0.0, 1.5),
+        r".*_(shoulder_pitch|shoulder_roll|shoulder_yaw|elbow_pitch)": (0.0, 2.0),
+      },
+      "operation": "abs",
+    },
+  )
+
   # mjlab adds a random 10-50 mm to the spawn height on every reset, on top of
   # init_state.pos. With init_state.pos[2] tuned so the soles sit exactly on the
   # ground, that offset is the only thing left making the robot start airborne,
@@ -196,6 +271,14 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   cfg.rewards["dof_pos_limits"].weight = 0.0
   # cfg.rewards["track_linear_velocity"].weight = 4.0
+
+  # soft_landing's cost is raw landing force in N (unsquared, unnormalized);
+  # the stock -1e-5 weight is 4-5 orders of magnitude too small to matter
+  # against landing forces of ~60-240 N. -0.001 puts its per-step
+  # contribution in the same ballpark as foot_slip, enough to actually shape
+  # behavior. Watch Metrics/landing_force_mean and Episode_Reward/soft_landing
+  # and retune from there.
+  cfg.rewards["soft_landing"].weight = -0.001
 
   # cfg.rewards["body_ang_vel"].weight = -0.05
   # cfg.rewards["angular_momentum"].weight = -0.02
@@ -262,7 +345,7 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # End episode as soon as anything but a foot hits ground. The stock
   # `fell_over` only fires on torso orientation, so a robot that drops onto a
   # knee or drags a hand can keep collecting reward while visibly failing.
-  # 10 N filters out grazing brushes; a 34 kg robot putting real weight on a
+  # 10 N filters out grazing brushes; a 38 kg robot putting real weight on a
   # limb is far above that.
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
     func=mdp.illegal_contact,
@@ -333,10 +416,16 @@ def dash_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.terminations.pop("out_of_terrain_bounds", None)
   cfg.curriculum.pop("terrain_levels", None)
 
+  # Disabled while tuning for a gentler, more stable gait: stages 1-2 push
+  # commands up to 3.0 m/s / 0.7 rad/s, which rewards aggressive, high-effort
+  # motion. Pinned at stage 0's range (lin_vel_x/y +/-1.0, ang_vel_z +/-0.5)
+  # for the whole run instead. Re-enable once the gait is stable at that range.
+  cfg.curriculum.pop("command_vel", None)
+
   if play:
     twist_cmd = cfg.commands["twist"]
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
-    twist_cmd.ranges.lin_vel_x = (-1.5, 2.0)
-    twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
+    twist_cmd.ranges.lin_vel_x = (-1.0, 1.0)
+    twist_cmd.ranges.ang_vel_z = (-0.5, 0.5)
 
   return cfg

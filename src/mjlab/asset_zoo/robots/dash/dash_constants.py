@@ -52,7 +52,8 @@ def get_spec(xml: Path = DASH_XML) -> mujoco.MjSpec:
 # WARNING: the effort limits below are ESTIMATES. Neither
 # the URDF (placeholder 10 Nm on every joint) nor the DashMotorControl firmware
 # (KT and gear ratio are runtime-configurable registers) pins them down. They
-# are scaled from the robot's 34 kg mass and typical humanoid ratios. Replace
+# are scaled from a 34 kg mass (the robot weighs ~38 kg, measured 2026-10-09;
+# the model totals 40.0) and typical humanoid ratios. Replace
 # with real values before deploying -- they bound the
 # torque the policy can rely on, so a policy trained against optimistic limits
 # will not reproduce on hardware.
@@ -68,6 +69,13 @@ EFFORT_LIMIT_ARM = 30.0
 
 # Reflected rotor inertia, also carried over from IsaacLab config.
 ARMATURE = 0.01
+
+# Command delay, in 5 ms physics steps: 0-25 ms, resampled every step.  The
+# 2026-09-17 policy, trained without any, falls walking at 35-40 ms of delay
+# in plain MuJoCo and cannot stand at 60 ms (DARoS-Core
+# Systems/DashSystem/CLAUDE.md).
+DELAY_MIN_LAG = 0
+DELAY_MAX_LAG = 5
 
 # Gains matched to the Unitree G1's published sim-to-real config
 # (unitree_rl_gym deploy/deploy_real/configs/g1.yaml: legs 100/150 stiffness,
@@ -91,6 +99,8 @@ DASH_HIP_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   damping=2.0,
   effort_limit=EFFORT_LIMIT_HIP,
   armature=ARMATURE,
+  delay_min_lag=DELAY_MIN_LAG,
+  delay_max_lag=DELAY_MAX_LAG,
 )
 DASH_KNEE_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   target_names_expr=(".*_knee_pitch",),
@@ -98,6 +108,8 @@ DASH_KNEE_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   damping=2.0,
   effort_limit=EFFORT_LIMIT_KNEE,
   armature=ARMATURE,
+  delay_min_lag=DELAY_MIN_LAG,
+  delay_max_lag=DELAY_MAX_LAG,
 )
 DASH_ANKLE_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   target_names_expr=(".*_ankle_pitch",),
@@ -105,6 +117,8 @@ DASH_ANKLE_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   damping=2.0,
   effort_limit=EFFORT_LIMIT_ANKLE,
   armature=ARMATURE,
+  delay_min_lag=DELAY_MIN_LAG,
+  delay_max_lag=DELAY_MAX_LAG,
 )
 DASH_ARM_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   target_names_expr=(
@@ -116,6 +130,8 @@ DASH_ARM_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   damping=1.0,
   effort_limit=EFFORT_LIMIT_ARM,
   armature=ARMATURE,
+  delay_min_lag=DELAY_MIN_LAG,
+  delay_max_lag=DELAY_MAX_LAG,
 )
 
 # Root height (0.6735) measured, not guessed: fold the keyframe into the model
