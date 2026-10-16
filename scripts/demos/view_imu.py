@@ -12,12 +12,13 @@ import argparse
 
 import mujoco
 import numpy as np
-from mjlab.asset_zoo.robots.dash import get_dash_robot_cfg
-from mjlab.entity.entity import Entity
 
 # Same scripts/demos/ directory; see the note in pose_joints.py.
 from pose_joints import launch_frozen
 from view_default_pose import add_ground, resolve_pose
+
+from mjlab.asset_zoo.robots.dash import get_dash_robot_cfg
+from mjlab.entity.entity import Entity
 
 SITE_NAME = "imu_in_torso"
 BODY_NAME = "torso"

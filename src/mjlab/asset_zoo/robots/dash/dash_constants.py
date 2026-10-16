@@ -8,6 +8,7 @@ import functools
 from pathlib import Path
 
 import mujoco
+
 from mjlab.actuator import BuiltinPositionActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
 from mjlab.utils.spec_config import CollisionCfg
@@ -225,6 +226,7 @@ DASH_ACTION_SCALE: dict[str, float] = {".*": 0.25}
 
 if __name__ == "__main__":
   import mujoco.viewer as viewer
+
   from mjlab.entity.entity import Entity
 
   robot = Entity(get_dash_robot_cfg())

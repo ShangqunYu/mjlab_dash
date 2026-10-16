@@ -22,6 +22,7 @@ import time
 import mujoco
 import mujoco.viewer
 import numpy as np
+
 from mjlab.asset_zoo.robots.dash import get_dash_robot_cfg
 from mjlab.entity.entity import Entity
 

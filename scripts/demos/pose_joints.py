@@ -25,14 +25,15 @@ import time
 
 import mujoco
 import mujoco.viewer
-from mjlab.asset_zoo.robots.dash import get_dash_robot_cfg
-from mjlab.entity.entity import Entity
 from mujoco._simulate import Simulate
 
 # Same repo, same scripts/demos/ directory -- this file is run as a script,
 # so that directory is on sys.path. Reused rather than copied so the floor
 # and the pattern resolution cannot drift apart between the two tools.
 from view_default_pose import add_ground, geom_group_option, resolve_pose
+
+from mjlab.asset_zoo.robots.dash import get_dash_robot_cfg
+from mjlab.entity.entity import Entity
 
 
 def launch_frozen(

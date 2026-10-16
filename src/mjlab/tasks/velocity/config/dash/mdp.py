@@ -7,6 +7,7 @@ untouched; import explicitly, since the task auto-importer skips `.mdp`.
 from collections.abc import Sequence
 
 import torch
+
 from mjlab.entity import Entity
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.reward_manager import RewardTermCfg

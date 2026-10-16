@@ -3,6 +3,7 @@
 Structured after mjlab's Unitree G1 velocity config.
 """
 
+from mjlab.asset_zoo.robots.dash import DASH_ACTION_SCALE, get_dash_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp import dr
@@ -22,8 +23,6 @@ from mjlab.sensor import (
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
-
-from mjlab.asset_zoo.robots.dash import DASH_ACTION_SCALE, get_dash_robot_cfg
 
 from .mdp import (
   arm_swing_symmetry,
@@ -278,7 +277,7 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # contribution in the same ballpark as foot_slip, enough to actually shape
   # behavior. Watch Metrics/landing_force_mean and Episode_Reward/soft_landing
   # and retune from there.
-  cfg.rewards["soft_landing"].weight = -0.001
+  cfg.rewards["soft_landing"].weight = -0.01
 
   # cfg.rewards["body_ang_vel"].weight = -0.05
   # cfg.rewards["angular_momentum"].weight = -0.02
@@ -286,10 +285,18 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Sized to sit under the tracking terms (weight 2.0) without dominating them.
   # This is the main knob: raise it if the gait stays flat-footed.
   cfg.rewards["air_time"].weight = 0.75
+  # air_time pays every step a foot is airborne up to threshold_max, so the cap
+  # sets how long a swing it is worth holding. At the stock 0.5 s the policy
+  # swung ~270 ms with almost no double support, which looked long on hardware.
+  cfg.rewards["air_time"].params["threshold_max"] = 0.3
 
   cfg.rewards["action_rate_l2"].weight = -0.1
 
   cfg.rewards["foot_clearance"].weight = -0.5
+  # mjlab's 0.1 m swing target is tuned for the G1; on hardware Dash's ~9 cm
+  # lift read as too high.
+  cfg.rewards["foot_clearance"].params["target_height"] = 0.05
+  cfg.rewards["foot_swing_height"].params["target_height"] = 0.05
 
   cfg.rewards["self_collisions"] = RewardTermCfg(
     func=mdp.self_collision_cost,
