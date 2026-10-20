@@ -1,4 +1,5 @@
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -9,6 +10,7 @@ import mjlab
 from mjlab.entity import Entity
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation, SimulationCfg
+from mjlab.tasks.tracking.config.dash.env_cfgs import dash_flat_tracking_env_cfg
 from mjlab.tasks.tracking.config.g1.env_cfgs import unitree_g1_flat_tracking_env_cfg
 from mjlab.utils.lab_api.math import (
   axis_angle_from_quat,
@@ -61,6 +63,12 @@ class MotionLoader:
     self.motion_base_rots_input = self.motion_base_rots_input[
       :, [3, 0, 1, 2]
     ]  # convert to wxyz
+    # Retargeters can emit slightly non-unit quaternions (e.g. an IK solver that
+    # only approximately enforces |q| = 1). MuJoCo normalizes on write, so
+    # without this the velocities derived below disagree with the sim's.
+    self.motion_base_rots_input = self.motion_base_rots_input / torch.linalg.norm(
+      self.motion_base_rots_input, dim=1, keepdim=True
+    )
     self.motion_dof_poss_input = motion[:, 7:]
 
     self.input_frames = motion.shape[0]
@@ -191,6 +199,7 @@ def run_sim(
   render,
   line_range,
   renderer: OffscreenRenderer | None = None,
+  output_file: str | None = None,
 ):
   motion = MotionLoader(
     motion_file=input_file,
@@ -305,6 +314,17 @@ def run_sim(
         ):
           log[k] = np.stack(log[k], axis=0)
 
+        if output_file is not None:
+          print(f"Saving to {output_file}...")
+          np.savez(output_file, **log)
+          if render:
+            import mediapy as media
+
+            video_file = str(Path(output_file).with_suffix(".mp4"))
+            media.write_video(video_file, frames, fps=output_fps)
+            print(f"[INFO]: Video saved to {video_file}")
+          break
+
         print("Saving to /tmp/motion.npz...")
         np.savez("/tmp/motion.npz", **log)
 
@@ -336,6 +356,62 @@ def run_sim(
         wandb.finish()
 
 
+# CSV joint-column order for each supported robot.
+G1_JOINT_NAMES = [
+  "left_hip_pitch_joint",
+  "left_hip_roll_joint",
+  "left_hip_yaw_joint",
+  "left_knee_joint",
+  "left_ankle_pitch_joint",
+  "left_ankle_roll_joint",
+  "right_hip_pitch_joint",
+  "right_hip_roll_joint",
+  "right_hip_yaw_joint",
+  "right_knee_joint",
+  "right_ankle_pitch_joint",
+  "right_ankle_roll_joint",
+  "waist_yaw_joint",
+  "waist_roll_joint",
+  "waist_pitch_joint",
+  "left_shoulder_pitch_joint",
+  "left_shoulder_roll_joint",
+  "left_shoulder_yaw_joint",
+  "left_elbow_joint",
+  "left_wrist_roll_joint",
+  "left_wrist_pitch_joint",
+  "left_wrist_yaw_joint",
+  "right_shoulder_pitch_joint",
+  "right_shoulder_roll_joint",
+  "right_shoulder_yaw_joint",
+  "right_elbow_joint",
+  "right_wrist_roll_joint",
+  "right_wrist_pitch_joint",
+  "right_wrist_yaw_joint",
+]
+
+# Model order, which is also the column order mocap_retargeting writes for Dash.
+DASH_JOINT_NAMES = [
+  f"{side}_{joint}"
+  for side in ("l", "r")
+  for joint in (
+    "hip_yaw",
+    "hip_roll",
+    "hip_pitch",
+    "knee_pitch",
+    "ankle_pitch",
+    "shoulder_pitch",
+    "shoulder_roll",
+    "shoulder_yaw",
+    "elbow_pitch",
+  )
+]
+
+ROBOTS = {
+  "g1": (unitree_g1_flat_tracking_env_cfg, G1_JOINT_NAMES),
+  "dash": (dash_flat_tracking_env_cfg, DASH_JOINT_NAMES),
+}
+
+
 def main(
   input_file: str,
   output_name: str,
@@ -344,26 +420,33 @@ def main(
   device: str = "cuda:0",
   render: bool = False,
   line_range: tuple[int, int] | None = None,
+  robot: Literal["g1", "dash"] = "g1",
+  output_file: str | None = None,
 ):
   """Replay motion from CSV file and output to npz file.
 
   Args:
     input_file: Path to the input CSV file.
-    output_name: Path to the output npz file.
+    output_name: Name of the motion in the WandB registry.
     input_fps: Frame rate of the CSV file.
     output_fps: Desired output frame rate.
     device: Device to use.
     render: Whether to render the simulation and save a video.
     line_range: Range of lines to process from the CSV file.
+    robot: Robot the CSV was retargeted to; sets the model and joint order.
+    output_file: If set, save the npz (and video, with --render) here and skip
+      the WandB upload.
   """
   if device.startswith("cuda") and not torch.cuda.is_available():
     print("[WARNING]: CUDA is not available. Falling back to CPU. This may be slow.")
     device = "cpu"
 
+  env_cfg_fn, joint_names = ROBOTS[robot]
+
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / output_fps
 
-  scene = Scene(unitree_g1_flat_tracking_env_cfg().scene, device=device)
+  scene = Scene(env_cfg_fn().scene, device=device)
   model = scene.compile()
 
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
@@ -391,37 +474,7 @@ def main(
   run_sim(
     sim=sim,
     scene=scene,
-    joint_names=[
-      "left_hip_pitch_joint",
-      "left_hip_roll_joint",
-      "left_hip_yaw_joint",
-      "left_knee_joint",
-      "left_ankle_pitch_joint",
-      "left_ankle_roll_joint",
-      "right_hip_pitch_joint",
-      "right_hip_roll_joint",
-      "right_hip_yaw_joint",
-      "right_knee_joint",
-      "right_ankle_pitch_joint",
-      "right_ankle_roll_joint",
-      "waist_yaw_joint",
-      "waist_roll_joint",
-      "waist_pitch_joint",
-      "left_shoulder_pitch_joint",
-      "left_shoulder_roll_joint",
-      "left_shoulder_yaw_joint",
-      "left_elbow_joint",
-      "left_wrist_roll_joint",
-      "left_wrist_pitch_joint",
-      "left_wrist_yaw_joint",
-      "right_shoulder_pitch_joint",
-      "right_shoulder_roll_joint",
-      "right_shoulder_yaw_joint",
-      "right_elbow_joint",
-      "right_wrist_roll_joint",
-      "right_wrist_pitch_joint",
-      "right_wrist_yaw_joint",
-    ],
+    joint_names=joint_names,
     input_fps=input_fps,
     input_file=input_file,
     output_fps=output_fps,
@@ -429,6 +482,7 @@ def main(
     render=render,
     line_range=line_range,
     renderer=renderer,
+    output_file=output_file,
   )
 
 

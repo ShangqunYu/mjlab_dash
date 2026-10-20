@@ -63,9 +63,9 @@ def get_spec(xml: Path = DASH_XML) -> mujoco.MjSpec:
 # one of its own, and the remaining arm joints share a third. Same motor gets
 # the same effort limit, stiffness and damping below -- there's no reason for
 # software gains to differ across joints the hardware can't tell apart.
-EFFORT_LIMIT_HIP = 60.0
-EFFORT_LIMIT_KNEE = 120.0
-EFFORT_LIMIT_ANKLE = 40.0
+EFFORT_LIMIT_HIP = 50.0
+EFFORT_LIMIT_KNEE = 90.0
+EFFORT_LIMIT_ANKLE = 35.0
 EFFORT_LIMIT_ARM = 30.0
 
 # Reflected rotor inertia, also carried over from IsaacLab config.
