@@ -18,7 +18,7 @@ def add_hardware_randomization(cfg: ManagerBasedRlEnvCfg) -> None:
   # matches this model with the torso COM moved 2-3.5 cm in -x; nominal gives
   # -3.8. The stock +/-2.5 cm stops short of that, so the x range is skewed.
   cfg.events["base_com"].params["ranges"] = {
-    0: (-0.04, 0.04),
+    0: (-0.06, 0.06),
     1: (-0.025, 0.025),
     2: (-0.03, 0.03),
   }

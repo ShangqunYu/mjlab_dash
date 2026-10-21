@@ -64,7 +64,7 @@ def get_spec(xml: Path = DASH_XML) -> mujoco.MjSpec:
 # the same effort limit, stiffness and damping below -- there's no reason for
 # software gains to differ across joints the hardware can't tell apart.
 EFFORT_LIMIT_HIP = 50.0
-EFFORT_LIMIT_KNEE = 90.0
+EFFORT_LIMIT_KNEE = 80.0
 EFFORT_LIMIT_ANKLE = 35.0
 EFFORT_LIMIT_ARM = 30.0
 
