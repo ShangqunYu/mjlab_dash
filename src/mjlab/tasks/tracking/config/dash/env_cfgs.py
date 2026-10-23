@@ -117,7 +117,7 @@ def dash_flat_tracking_env_cfg(
   add_hardware_randomization(cfg)
   # Wider than walking's x range: the dance policy leaned on hardware, and the
   # measured 2-3.5 cm rearward offset sits well inside +/-6 cm. Tracking only.
-  cfg.events["base_com"].params["ranges"][0] = (-0.06, 0.06)
+  cfg.events["base_com"].params["ranges"][0] = (-0.06, -0.06)
 
   # Nothing else in the tracking reward looks at torque, so the policy rode the
   # hip pitch and knee caps through the hardest moves. Free below 90% of each
@@ -126,7 +126,7 @@ def dash_flat_tracking_env_cfg(
   cfg.rewards["torque_near_limit"] = RewardTermCfg(
     func=torque_near_limit,
     weight=-1.0,
-    params={"threshold": 0.9},
+    params={"threshold": 0.8},
   )
 
   cfg.terminations["ee_body_pos"].params["body_names"] = (
