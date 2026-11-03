@@ -7,7 +7,7 @@ from mjlab.asset_zoo.robots.dash import DASH_ACTION_SCALE, get_dash_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers import TerminationTermCfg
+from mjlab.managers import CurriculumTermCfg, TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
@@ -25,10 +25,19 @@ from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
 from .hardware_dr import add_hardware_randomization
 from .mdp import (
+  action_rate_l2_speed_scaled,
   arm_swing_symmetry,
   feet_air_time_asymmetry,
+  feet_air_time_speed_scaled,
+  feet_clearance_speed_scaled,
   feet_stance_imbalance,
+  feet_swing_height_speed_scaled,
+  forward_progress,
+  soft_landing_speed_scaled,
   torso_height_below_minimum,
+  track_angular_velocity_speed_scaled,
+  track_linear_velocity_speed_scaled,
+  velocity_level_curriculum,
 )
 
 
@@ -101,6 +110,10 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     "r_upper_leg_collision",
     "l_lower_leg_collision",
     "r_lower_leg_collision",
+    "l_ankle_linkage_collision",
+    "r_ankle_linkage_collision",
+    "l_knee_linkage_collision",
+    "r_knee_linkage_collision",
     "l_upper_arm_collision",
     "r_upper_arm_collision",
     "l_lower_arm_collision",
@@ -231,7 +244,6 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     weight=-1.0,
     params={"sensor_name": self_collision_cfg.name, "force_threshold": 10.0},
   )
-
   # Asymmetry is the shaping term: it compares the last completed swing of each
   # foot, so a hopping gait (one foot never swinging) reads as a large spread.
   # Stance imbalance is the backstop: it bites while a foot is still planted,
@@ -362,5 +374,175 @@ def dash_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
     twist_cmd.ranges.lin_vel_x = (-1.0, 1.0)
     twist_cmd.ranges.ang_vel_z = (-0.5, 0.5)
+
+  return cfg
+
+
+# Speed band over which the gait terms switch from walking to running shaping.
+# The lower end matches the `pose` reward's running_threshold (1.5 m/s), above
+# which it already uses std_running.
+RUN_BLEND_V_WALK = 1.5
+RUN_BLEND_V_RUN = 3.0
+
+
+def dash_run_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create the Dash flat-ground running configuration.
+
+  Same as the flat walking task, except:
+  - The max forward command steps up from 1.0 to 5.0 m/s through a
+    performance-gated curriculum (`velocity_level_curriculum`).
+  - The walking-tuned gait terms (swing cap, clearance height, landing cost)
+    relax with commanded speed between RUN_BLEND_V_WALK and RUN_BLEND_V_RUN.
+    Below that band they match the walking task, so a walking checkpoint
+    starts on the reward it was trained on.
+
+  WARNING: the actuators clamp torque only; there is no torque-speed curve, so
+  at high speed the policy can rely on motors spinning faster than the real ones
+  can at that torque. Add one before putting anything above ~2 m/s on hardware.
+  """
+  cfg = dash_flat_env_cfg(play=play)
+
+  twist_cmd = cfg.commands["twist"]
+  assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+  # Lateral and yaw stay at walking magnitudes: a sharp turn or a sidestep at
+  # 4 m/s is a separate skill, not part of learning to run.
+  twist_cmd.ranges.lin_vel_y = (-0.5, 0.5)
+  twist_cmd.ranges.ang_vel_z = (-0.5, 0.5)
+  # More straight-line commands than walking (0.2), since that's where the
+  # top speeds get practiced.
+  twist_cmd.rel_forward_envs = 0.4
+
+  blend = {"v_walk": RUN_BLEND_V_WALK, "v_run": RUN_BLEND_V_RUN}
+
+  # Tolerance grows with commanded speed above 2.5 m/s (0.2 x 2.5 = the stock
+  # 0.5), reaching 1.0 m/s at a 5 m/s command. See
+  # track_linear_velocity_speed_scaled for why a fixed tolerance collapses.
+  track = cfg.rewards["track_linear_velocity"]
+  cfg.rewards["track_linear_velocity"] = RewardTermCfg(
+    func=track_linear_velocity_speed_scaled,
+    weight=track.weight,
+    params={
+      "command_name": "twist",
+      "std_min": track.params["std"],
+      "std_ratio": 0.2,
+      "asset_cfg": SceneEntityCfg("robot"),
+    },
+  )
+  site_names = ("l_foot", "r_foot")
+
+  # The terms below exist because, at 4 m/s, running at 3.2 m/s earned ~0.17/s
+  # *less* than standing still: tracking paid +1.25/s, while yaw tracking,
+  # pose, action rate, landing and slip together cost ~1.4/s. Giving up won
+  # at the top of the range, then spread down to 3 m/s, where running still
+  # won but a stopped policy got no tracking signal to find its way back.
+  # forward_progress gives that signal and pays ~+0.7/s for running at 4 m/s;
+  # halving action rate and yaw tracking at speed closes another ~0.3/s.
+  cfg.rewards["forward_progress"] = RewardTermCfg(
+    func=forward_progress,
+    weight=1.0,
+    params={
+      "command_name": "twist",
+      "asset_cfg": SceneEntityCfg("robot"),
+      **blend,
+    },
+  )
+  action_rate = cfg.rewards["action_rate_l2"]
+  cfg.rewards["action_rate_l2"] = RewardTermCfg(
+    func=action_rate_l2_speed_scaled,
+    weight=action_rate.weight,
+    params={"command_name": "twist", "run_scale": 0.5, **blend},
+  )
+  track_ang = cfg.rewards["track_angular_velocity"]
+  cfg.rewards["track_angular_velocity"] = RewardTermCfg(
+    func=track_angular_velocity_speed_scaled,
+    weight=track_ang.weight,
+    params={
+      "command_name": "twist",
+      "std": track_ang.params["std"],
+      "run_scale": 0.5,
+      **blend,
+    },
+  )
+
+  air_time = cfg.rewards["air_time"]
+  cfg.rewards["air_time"] = RewardTermCfg(
+    func=feet_air_time_speed_scaled,
+    weight=air_time.weight,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "command_name": "twist",
+      "threshold_min": air_time.params["threshold_min"],
+      "threshold_max_walk": air_time.params["threshold_max"],
+      "threshold_max_run": 0.45,
+      **blend,
+    },
+  )
+  foot_clearance = cfg.rewards["foot_clearance"]
+  cfg.rewards["foot_clearance"] = RewardTermCfg(
+    func=feet_clearance_speed_scaled,
+    weight=foot_clearance.weight,
+    params={
+      "height_sensor_name": "foot_height_scan",
+      "command_name": "twist",
+      "target_height_walk": foot_clearance.params["target_height"],
+      "target_height_run": 0.12,
+      "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
+      **blend,
+    },
+  )
+  swing_height = cfg.rewards["foot_swing_height"]
+  cfg.rewards["foot_swing_height"] = RewardTermCfg(
+    func=feet_swing_height_speed_scaled,
+    weight=swing_height.weight,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "height_sensor_name": "foot_height_scan",
+      "command_name": "twist",
+      "target_height_walk": swing_height.params["target_height"],
+      "target_height_run": 0.12,
+      **blend,
+    },
+  )
+  soft_landing = cfg.rewards["soft_landing"]
+  cfg.rewards["soft_landing"] = RewardTermCfg(
+    func=soft_landing_speed_scaled,
+    weight=soft_landing.weight,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "command_name": "twist",
+      "run_scale": 0.25,
+      **blend,
+    },
+  )
+
+  if play:
+    twist_cmd.ranges.lin_vel_x = (-1.0, 5.0)
+    return cfg
+
+  cfg.curriculum["command_vel"] = CurriculumTermCfg(
+    func=velocity_level_curriculum,
+    params={
+      "command_name": "twist",
+      "reward_name": "track_linear_velocity",
+      "levels": [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0],
+      "min_lin_vel_x": -1.0,
+      # Below the walking policy's 0.71 at +/-1 m/s, since the score drifts
+      # down as the range widens (see velocity_level_curriculum). 0.65 stalled
+      # a policy that tracked 3.0 m/s to within 4% at ~0.62.
+      "promote_threshold": 0.6,
+      # Well under the ~0.56 the collapsed policy settled at, so ordinary noise
+      # around the promote threshold doesn't bounce levels.
+      "demote_threshold": 0.45,
+      # Several thousand episodes per level: one full turnover of 4096 envs.
+      "min_episodes": 4096,
+      # Top-speed gate. A policy that ran 3.18 m/s at a 4.0 m/s command
+      # holds ~0.8 steady (lower while accelerating after a resample); a
+      # collapsed one sits near 0.1.
+      "top_frac": 0.8,
+      "top_promote": 0.7,
+      "top_demote": 0.5,
+      "asset_cfg": SceneEntityCfg("robot"),
+    },
+  )
 
   return cfg

@@ -43,7 +43,110 @@ def get_spec(xml: Path = DASH_XML) -> mujoco.MjSpec:
   for joint in spec.joints:
     joint.actfrclimited = mujoco.mjtLimited.mjLIMITED_FALSE
 
+  _add_ankle_linkage_colliders(spec)
+  _add_forearm_thigh_collision(spec)
+  _add_knee_linkage_colliders(spec)
+
   return spec
+
+
+def _add_forearm_thigh_collision(spec: mujoco.MjSpec) -> None:
+  """Restore forearm-thigh contact via mesh hulls.
+
+  dash_v1.xml excludes lower_arm/upper_leg because their capsules report false
+  overlap through the arm swing. Without any contact, though, the running
+  policy swings the forearm straight through the thigh (mesh overlap in ~25% of
+  steps at 2-5 m/s), which hardware then hits. So add a hull of each visual
+  mesh and an explicit pair between them. Pairs bypass the exclude and the
+  contype/conaffinity masks, so the hulls touch nothing else. The thigh hull
+  sits ~10 mm proud of the real surface, which errs toward clearance.
+  """
+  for side in ("l", "r"):
+    for body in (f"{side}_lower_arm", f"{side}_upper_leg"):
+      visual = spec.geom(f"{body}_visual")
+      spec.body(body).add_geom(
+        name=f"{body}_hull",
+        type=mujoco.mjtGeom.mjGEOM_MESH,
+        meshname=visual.meshname,
+        pos=visual.pos.tolist(),
+        quat=visual.quat.tolist(),
+        group=3,
+        contype=0,
+        conaffinity=0,
+        density=0,
+      )
+    spec.add_pair(
+      geomname1=f"{side}_lower_arm_hull",
+      geomname2=f"{side}_upper_leg_hull",
+      condim=1,
+    )
+
+
+# The knee is also driven through a linkage the meshes leave out, running down
+# the outer side of the thigh. The thigh's outer face is 78 mm from the
+# upper_leg axis, and the forearm swings just outside it, so the linkage is
+# what the arm would hit first. Modeled like the ankle linkage: a massless
+# capsule from the hip-pitch axis (y=0) to the knee axis (y=0.28). In the
+# upper_leg frame +y points down the thigh and z is lateral: outer is +z on
+# the left leg, -z on the right. Size is a first guess pending a measurement.
+KNEE_LINKAGE_OUTER_EXTENT = 0.078 + 0.030
+KNEE_LINKAGE_RADIUS = 0.020
+KNEE_LINKAGE_Y_RANGE = (0.0, 0.28)
+
+
+def _add_knee_linkage_colliders(spec: mujoco.MjSpec) -> None:
+  """Add the knee linkages; needs the forearm hulls to pair against.
+
+  Named *_collision, so it collides with everything not excluded (ground, the
+  other leg). The forearm is excluded from the whole upper_leg body, so it
+  gets an explicit pair with the forearm hull, as the thigh hull does.
+  """
+  z = KNEE_LINKAGE_OUTER_EXTENT - KNEE_LINKAGE_RADIUS
+  y0, y1 = KNEE_LINKAGE_Y_RANGE
+  for side, outer in (("l", 1.0), ("r", -1.0)):
+    spec.body(f"{side}_upper_leg").add_geom(
+      name=f"{side}_knee_linkage_collision",
+      type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+      fromto=[0.0, y0, outer * z, 0.0, y1, outer * z],
+      size=[KNEE_LINKAGE_RADIUS, 0, 0],
+      group=3,
+      density=0.0,
+    )
+    spec.add_pair(
+      geomname1=f"{side}_lower_arm_hull",
+      geomname2=f"{side}_knee_linkage_collision",
+      condim=1,
+    )
+
+
+# The ankle is driven through a linkage that the designer's meshes leave out.
+# On hardware it runs the whole shank on the inner side, and at running speed
+# the two linkages hit each other. Modeled as a massless capsule on each lower
+# leg from the knee axis (y=0) down to just above the ankle axis (y=0.28);
+# stopping at 0.27 keeps the rounded end ~18 mm above the ground with the foot
+# flat. The capsule axis sits ANKLE_LINKAGE_OFFSET inward of the shank axis,
+# so its inner face is OFFSET + RADIUS = 73 mm from it -- 50 mm past the
+# shank's own inner face (23 mm). Deliberately larger than the ~30 mm the
+# linkage measures, for margin: the real robot brings its feet closer together
+# than the sim does. In the lower_leg frame +y points down the shank and z is
+# lateral: inner is -z on the left leg, +z on the right.
+ANKLE_LINKAGE_OFFSET = 0.038
+ANKLE_LINKAGE_RADIUS = 0.035
+ANKLE_LINKAGE_Y_RANGE = (0.0, 0.27)
+
+
+def _add_ankle_linkage_colliders(spec: mujoco.MjSpec) -> None:
+  z = ANKLE_LINKAGE_OFFSET
+  y0, y1 = ANKLE_LINKAGE_Y_RANGE
+  for side, inner in (("l", -1.0), ("r", 1.0)):
+    spec.body(f"{side}_lower_leg").add_geom(
+      name=f"{side}_ankle_linkage_collision",
+      type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+      fromto=[0.0, y0, inner * z, 0.0, y1, inner * z],
+      size=[ANKLE_LINKAGE_RADIUS, 0, 0],
+      group=3,
+      density=0.0,
+    )
 
 
 ##
@@ -65,7 +168,7 @@ def get_spec(xml: Path = DASH_XML) -> mujoco.MjSpec:
 # software gains to differ across joints the hardware can't tell apart.
 EFFORT_LIMIT_HIP = 50.0
 EFFORT_LIMIT_KNEE = 80.0
-EFFORT_LIMIT_ANKLE = 35.0
+EFFORT_LIMIT_ANKLE = 40.0
 EFFORT_LIMIT_ARM = 30.0
 
 # Reflected rotor inertia, also carried over from IsaacLab config.

@@ -3,10 +3,7 @@
 Structured after mjlab's Unitree G1 tracking config.
 """
 
-import mujoco
-
 from mjlab.asset_zoo.robots.dash import DASH_ACTION_SCALE, get_dash_robot_cfg
-from mjlab.asset_zoo.robots.dash.dash_constants import get_spec
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg
@@ -17,38 +14,6 @@ from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
 from mjlab.tasks.velocity.config.dash.hardware_dr import add_hardware_randomization
 
 from .mdp import torque_near_limit
-
-
-def get_spec_with_forearm_thigh_collision() -> mujoco.MjSpec:
-  """Dash spec with forearm-thigh contact restored via mesh hulls.
-
-  dash_v1.xml excludes lower_arm/upper_leg because their capsules report false
-  overlap through the walking arm swing. Mocap motions can still drive the hand
-  into the thigh, which hardware then hits, so tracking adds a hull of each
-  visual mesh and an explicit pair between them. Pairs bypass the exclude and
-  the contype/conaffinity masks, so the hulls touch nothing else.
-  """
-  spec = get_spec()
-  for side in ("l", "r"):
-    for body in (f"{side}_lower_arm", f"{side}_upper_leg"):
-      visual = spec.geom(f"{body}_visual")
-      spec.body(body).add_geom(
-        name=f"{body}_hull",
-        type=mujoco.mjtGeom.mjGEOM_MESH,
-        meshname=visual.meshname,
-        pos=visual.pos.tolist(),
-        quat=visual.quat.tolist(),
-        group=3,
-        contype=0,
-        conaffinity=0,
-        density=0,
-      )
-    spec.add_pair(
-      geomname1=f"{side}_lower_arm_hull",
-      geomname2=f"{side}_upper_leg_hull",
-      condim=1,
-    )
-  return spec
 
 
 def dash_flat_tracking_env_cfg(
@@ -65,7 +30,6 @@ def dash_flat_tracking_env_cfg(
   cfg = make_tracking_env_cfg()
 
   robot_cfg = get_dash_robot_cfg()
-  robot_cfg.spec_fn = get_spec_with_forearm_thigh_collision
   cfg.scene.entities = {"robot": robot_cfg}
 
   self_collision_cfg = ContactSensorCfg(
