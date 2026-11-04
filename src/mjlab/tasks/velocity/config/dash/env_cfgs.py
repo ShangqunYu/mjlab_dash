@@ -23,6 +23,7 @@ from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
+from .depth import add_forward_depth
 from .hardware_dr import add_hardware_randomization
 from .mdp import (
   action_rate_l2_speed_scaled,
@@ -114,6 +115,7 @@ def dash_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     "r_ankle_linkage_collision",
     "l_knee_linkage_collision",
     "r_knee_linkage_collision",
+    "realsense_collision",
     "l_upper_arm_collision",
     "r_upper_arm_collision",
     "l_lower_arm_collision",
@@ -545,4 +547,16 @@ def dash_run_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     },
   )
 
+  return cfg
+
+
+def dash_rough_depth_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Rough terrain plus forward depth from the torso RealSense.
+
+  Adds a separate `depth` observation group; the actor and critic are
+  unchanged, so this is the environment for a depth student, not yet a
+  trained depth policy.
+  """
+  cfg = dash_rough_env_cfg(play=play)
+  add_forward_depth(cfg, play=play)
   return cfg

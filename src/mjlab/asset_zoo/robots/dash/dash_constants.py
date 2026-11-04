@@ -46,6 +46,7 @@ def get_spec(xml: Path = DASH_XML) -> mujoco.MjSpec:
   _add_ankle_linkage_colliders(spec)
   _add_forearm_thigh_collision(spec)
   _add_knee_linkage_colliders(spec)
+  _add_realsense(spec)
 
   return spec
 
@@ -146,6 +147,83 @@ def _add_ankle_linkage_colliders(spec: mujoco.MjSpec) -> None:
       size=[ANKLE_LINKAGE_RADIUS, 0, 0],
       group=3,
       density=0.0,
+    )
+
+
+# Intel RealSense D435 on a printed jig at the bottom of the torso's front
+# face. Pose from the Onshape "Dash" document, Assembly 1 (whose frame matches
+# the torso body frame to ~2 mm): the jig's seat faces 50 deg below
+# horizontal, and the camera's back sits flush on it. The realsense body's
+# frame has +x along the optical axis, +y = torso +y, +z = away from the
+# torso. Both meshes are expressed in that frame. The D435 sits upright: its
+# 1/4-20 tripod hole faces -z (down/back). Mass: 72 g is Intel's
+# D435 spec, plus ~20 g for the printed jig.
+REALSENSE_POS = (0.10607, 0.0, 0.03069)
+REALSENSE_QUAT = (0.90631, 0.0, 0.42261, 0.0)
+REALSENSE_HALF_SIZE = (0.0121, 0.0454, 0.0124)
+REALSENSE_MASS = 0.072 + 0.020
+REALSENSE_MESH_DIR = Path(__file__).parent / "xmls" / "assets_sensors"
+# Depth stream at 848x480: 89.9 x 58.9 deg, from this unit's factory
+# calibration (serial 825312071982); render at 848x480 to match.
+REALSENSE_FOVY = 58.9
+
+
+def _add_realsense(spec: mujoco.MjSpec) -> None:
+  """Add the camera + jig as a welded body with a depth camera at the lens.
+
+  The box collider is named *_collision, so it collides with the ground and
+  the legs; the forearm is excluded from the torso subtree, so it gets an
+  explicit pair with each forearm hull.
+  """
+  for name in ("realsense_d435", "realsense_jig"):
+    spec.add_mesh(name=name, file=str(REALSENSE_MESH_DIR / f"{name}.stl"))
+  hx, hy, hz = REALSENSE_HALF_SIZE
+  body = spec.body("torso").add_body(
+    name="realsense",
+    pos=REALSENSE_POS,
+    quat=REALSENSE_QUAT,
+    mass=REALSENSE_MASS,
+    # Solid box over the camera; the jig is a small fraction of the mass.
+    inertia=[
+      REALSENSE_MASS / 3 * (hy**2 + hz**2),
+      REALSENSE_MASS / 3 * (hx**2 + hz**2),
+      REALSENSE_MASS / 3 * (hx**2 + hy**2),
+    ],
+  )
+  # Group 1, not the robot's visual group 2: still drawn by the viewer, but
+  # left out of the depth render, since the camera sits on its own front
+  # glass and a position perturbation would put it inside the housing.
+  for name in ("realsense_d435", "realsense_jig"):
+    body.add_geom(
+      name=f"{name}_visual",
+      type=mujoco.mjtGeom.mjGEOM_MESH,
+      meshname=name,
+      group=1,
+      contype=0,
+      conaffinity=0,
+      density=0.0,
+    )
+  body.add_geom(
+    name="realsense_collision",
+    type=mujoco.mjtGeom.mjGEOM_BOX,
+    size=list(REALSENSE_HALF_SIZE),
+    group=3,
+    density=0.0,
+  )
+  # MuJoCo cameras look along their -z. The image is rendered upright (image
+  # up = +z, right = robot right), which matches the raw D435 stream since
+  # the camera is mounted upright.
+  body.add_camera(
+    name="realsense_depth",
+    pos=[hx, 0.0, 0.0],
+    xyaxes=[0.0, -1.0, 0.0, 0.0, 0.0, 1.0],
+    fovy=REALSENSE_FOVY,
+  )
+  for side in ("l", "r"):
+    spec.add_pair(
+      geomname1=f"{side}_lower_arm_hull",
+      geomname2="realsense_collision",
+      condim=1,
     )
 
 
